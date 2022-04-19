@@ -4,7 +4,7 @@ MAX_GLOBAL_PATH = 15
 
 routerId = None
 inputPorts = []
-outputPorts = {}
+outputPorts = []
 
 
 def loadConfig(configFileName):
@@ -46,13 +46,14 @@ def loadConfig(configFileName):
         elif line[0] == 'output-ports':
             ports = []
             for i in range(1, len(line)):
-                ports.append(int(line[i].strip(",")))
+                ports.append(line[i].strip(","))
             for port in ports:
                 port = port.split('-')
                 if len(port) != 3:
                     raise Exception(
-                        "Incorrect output port format given. Expected: output-ports port-cost-id")
-                outputPorts.update({int(port[0]), int(port[1])})
+                        "Incorrect output port format given. Expected: output-ports port-cost-id"
+                    )
+                outputPorts.append((int(port[0]), int(port[1])))
 
 
 def checkConfig():
@@ -88,6 +89,11 @@ def main(args):
     except Exception as e:
         print(e)
         print("\nExiting...")
+        exit()
+
+    print(routerId)
+    print(inputPorts)
+    print(outputPorts)
 
 
 if __name__ == "__main__":
