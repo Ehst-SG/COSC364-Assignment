@@ -7,7 +7,7 @@ timer = threading.timer()
 routerId = None
 inputPorts = []
 outputPorts = []
-sockets = []
+routingTable = []
 
 
 def loadConfig(configFileName):
@@ -62,7 +62,8 @@ def loadConfig(configFileName):
                     raise Exception(
                         "Incorrect output port format given. Expected: output-ports port-cost-id"
                     )
-                outputPorts.append((int(port[0]), int(port[1])))
+                outputPorts.append((int(port[0]), int(port[1]), int(port[2]))) # Need the router id to check where the port is coming from when sending an update
+                routingTable.append([int(port[0]), int(port[1]), int(port[2])])
 
 
 def checkConfig():
@@ -81,6 +82,7 @@ def checkConfig():
     if len(outputPorts) == 0:
         raise Exception("No output ports given")
 
+
 def bindUDPPorts():
     global inputPorts
     global outputPorts
@@ -92,24 +94,26 @@ def bindUDPPorts():
         newSocket.bind((HOST, PORT))
 
 
-
-
-
-def probe():
-    pass
-
-
 def updateRoutingTable(newEntry):
-    pass
+    # Needs to check if the port is already in the table
+    # if it is, compare the metric then update accordingly
+    
+    global routingTable
+
+    for route in routingTable:
+        if route[0]
 
 
 
-def sendUpdate():
+def sendUpdate(id, port):
+    global outputPorts
     # Need to check if what router is being sent to and to not include
     # routes that that router has sent to this router
-    updatePacket = [2, 2, 0, 0, AFI, AFI, 0, 0, id, id, id, id, 0, 0 ,0, 0, next hop, next hop, next hop, next hop, metric, metric, metric, metric]
-    updatePacket = bytearray(updatePacket)
-    conn.sendall(updatePacket)
+    for i in outputPorts:
+        if i[2] != id:
+            updatePacket = [2, 2, 0, 0, AFI, AFI, 0, 0, id, id, id, id, 0, 0 ,0, 0, next hop, next hop, next hop, next hop, metric, metric, metric, metric]
+            updatePacket = bytearray(updatePacket)
+            conn.sendall(updatePacket)
     pass
 
 
