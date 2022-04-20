@@ -107,7 +107,7 @@ def updateRoutingTable(newEntry):
 def sendUpdate():
     # Need to check if what router is being sent to and to not include
     # routes that that router has sent to this router
-    updatePacket = [2, 2, 0, 0, AFI.1, AFI.2, 0, 0, id, id, id, id, 0, 0 ,0, 0, next hop, next hop, next hop, next hop, metric, metric, metric, metric]
+    updatePacket = [2, 2, 0, 0, AFI, AFI, 0, 0, id, id, id, id, 0, 0 ,0, 0, next hop, next hop, next hop, next hop, metric, metric, metric, metric]
     updatePacket = bytearray(updatePacket)
     conn.sendall(updatePacket)
     pass
