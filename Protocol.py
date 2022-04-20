@@ -1,13 +1,37 @@
-import sys, socket, select, threading
+import sys
+import socket
+import select
+import threading
+import time
 
 MAX_GLOBAL_PATH = 15
 
-timer = threading.timer()
-
 routerId = None
 inputPorts = []
-outputPorts = []
-routingTable = []
+# outputPorts = []
+# routingTable = []
+
+
+outputPorts = dict()
+inputSockets = []
+
+
+forwardingTable = dict()
+
+
+class ForwardingTableEntry:
+    def __init__(self, destination, nextHop, weight, port):
+        self.destination = destination
+        self.nextHop = nextHop
+        self.weight = weight
+        self.port = port
+        self.timer = time.time()
+
+    def update(self, nextHop, weight, port):
+        self.nextHop = nextHop
+        self.weight = weight
+        self.port = port
+        self.timer = time.time()
 
 
 def loadConfig(configFileName):
@@ -28,7 +52,7 @@ def loadConfig(configFileName):
         # Checks the router ID
         if line[0] == "router-id":
             try:
-                id = int(line[1])
+                id = int(line[1])repository
             except Exception:
                 raise Exception("Given router ID is not a number.")
 
@@ -62,8 +86,9 @@ def loadConfig(configFileName):
                     raise Exception(
                         "Incorrect output port format given. Expected: output-ports port-cost-id"
                     )
-                outputPorts.append((int(port[0]), int(port[1]), int(port[2]))) # Need the router id to check where the port is coming from when sending an update
-                routingTable.append([int(port[0]), int(port[1]), int(port[2])])
+                # outputPorts.append((int(port[0]), int(port[1]), int(port[2]))) # Need the router id to check where the port is coming from when sending an update
+                # routingTable.append([int(port[0]), int(port[1]), int(port[2])])
+                outputPorts[int(port[0])] = int(port[1])
 
 
 def checkConfig():
@@ -93,11 +118,13 @@ def bindUDPPorts():
         newSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         newSocket.bind((HOST, PORT))
 
+        inputSockets.append(newSocket)
+
 
 def updateRoutingTable(newEntry):
     # Needs to check if the port is already in the table
     # if it is, compare the metric then update accordingly
-    
+
     global routingTable
 
     for route in routingTable:
@@ -105,20 +132,28 @@ def updateRoutingTable(newEntry):
 
 
 
-def sendUpdate(id, port):
-    global outputPorts
-    # Need to check if what router is being sent to and to not include
-    # routes that that router has sent to this router
-    for i in outputPorts:
-        if i[2] != id:
-            updatePacket = [2, 2, 0, 0, AFI, AFI, 0, 0, id, id, id, id, 0, 0 ,0, 0, next hop, next hop, next hop, next hop, metric, metric, metric, metric]
-            updatePacket = bytearray(updatePacket)
-            conn.sendall(updatePacket)
-    pass
+# def sendUpdate(id, port):
+#     global outputPorts
+#     # Need to check if what router is being sent to and to not include
+#     # routes that that router has sent to this router
+#     for i in outputPorts:
+#         if i[2] != id:
+#             updatePacket = [2, 2, 0, 0, AFI, AFI, 0, 0, id, id, id, id, 0, 0 ,0, 0, next hop, next hop, next hop, next hop, metric, metric, metric, metric]
+#             updatePacket = bytearray(updatePacket)
+#             conn.sendall(updatePacket)
+#     pass
 
 
 def parseUpdate():
     pass
+
+
+def broadcastUpdate():
+    """
+    Sends an unsolicited Update message to all neighboring routers
+    """
+    pass
+
 
 
 
@@ -142,10 +177,23 @@ def main(args):
         print("\nExiting...")
         exit()
 
+    periodicTime = time.time() + PERIODIC
 
     try:
-        while true:
-            break;
+        while True:
+            readable, _, _ = select.select(
+                inputSockets, [], [], periodicTime - time.time())
+            if len(readable) == 0:
+                broadcastUpdate()
+
+                for entry in forwardingTable:
+                    if entry.timer + TIMEOUT + GARBAGE_COLLECTION <= time.time():
+                        forwardingTable.pop(forwardingTable[entry].destination)
+                periodicTime = time.time() + PERIODIC
+            else:
+                for inputSocket in readable:
+                    # Implement reading of incoming messages
+                    pass
     except Exception as e:
         print(e)
         print("\nExiting...")
