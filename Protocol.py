@@ -5,6 +5,9 @@ import threading
 import time
 
 MAX_GLOBAL_PATH = 15
+PERIODIC = 3
+TIMEOUT = 18
+GARBAGE_COLLECTION = 12
 
 routerId = None
 inputPorts = []
