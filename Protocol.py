@@ -5,36 +5,68 @@ import threading
 import time
 
 MAX_GLOBAL_PATH = 15
+
 PERIODIC = 3
 TIMEOUT = 18
 GARBAGE_COLLECTION = 12
 
 routerId = None
 inputPorts = []
-# outputPorts = []
-# routingTable = []
-
-
 outputPorts = dict()
 inputSockets = []
-
 
 forwardingTable = dict()
 
 
 class ForwardingTableEntry:
-    def __init__(self, destination, nextHop, weight, port):
+    def __init__(self, destination, nextHop, weight, port, source):
         self.destination = destination
         self.nextHop = nextHop
         self.weight = weight
         self.port = port
         self.timer = time.time()
+        self.source = source
 
-    def update(self, nextHop, weight, port):
+    def update(self, nextHop, weight, port, source):
         self.nextHop = nextHop
         self.weight = weight
         self.port = port
         self.timer = time.time()
+        self.source = source
+
+
+class ParseIncomingPacket:
+    def __init__(self, data):
+        self.valid = True
+        if len(data) > 24:
+            parseHeader(data)
+
+    def parseHeader(self, data):
+        self.command = data[0]
+        self.version = data[1]
+        if (not command in [0, 1]) or (self.version != 2) or (data[2] || data[3] != 0):
+            self.valid = False
+
+
+
+
+class RIPOUTPaCkeT:
+    VERSION = 2
+    AFI = 2
+
+    def __init__(self, command, nextHop, metric):
+        self.command = command
+        self.version = VERSION
+        self.afi = AFI
+        self.id = routerId
+        self.nextHop = nextHop
+        self.metric = metric
+
+    def makePacket():
+        idByte = bytearray(routerId)
+        nextHopByte = bytearray(nextHop)
+        metricByte = bytearray(metric)
+        outPacket = bytearray([self.command, self.version, 0, 0, self.afi, 0, 0, idByte >> 24, idByte >> 16 & 0xFF, idByte >> 8 & 0xFF, idByte & 0xFF, 0, 0, 0, 0, nextHopByte >> 24, nextHopByte >> 16 & 0xFF, nextHopByte >> 8 & 0xFF, nextHopByte & 0xFF, metricByte >> 24, metricByte >> 16 & 0xFF, metricByte >> 8 & 0xFF, metricByte & 0xFF])
 
 
 def loadConfig(configFileName):
@@ -127,11 +159,7 @@ def bindUDPPorts():
 def updateRoutingTable(newEntry):
     # Needs to check if the port is already in the table
     # if it is, compare the metric then update accordingly
-
-    global routingTable
-
-    for route in routingTable:
-        if route[0]
+    pass
 
 
 
@@ -154,8 +182,8 @@ def parseUpdate():
 def broadcastUpdate():
     """
     Sends an unsolicited Update message to all neighboring routers
+    broadcast these nuts
     """
-    pass
 
 
 
