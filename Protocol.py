@@ -23,16 +23,15 @@ class ForwardingTableEntry:
         self.destination = destination
         self.nextHop = nextHop
         self.weight = weight
-        self.port = port
         self.timer = time.time()
         self.source = source
 
     def update(self, nextHop, weight, port, source):
         self.nextHop = nextHop
         self.weight = weight
-        self.port = port
         self.timer = time.time()
         self.source = source
+
 
 
 class ParseIncomingPacket:
@@ -40,17 +39,29 @@ class ParseIncomingPacket:
         self.valid = True
         if len(data) > 24:
             parseHeader(data)
+        else:
+            self.valid = False
 
     def parseHeader(self, data):
         self.command = data[0]
         self.version = data[1]
-        if (not command in [0, 1]) or (self.version != 2) or (data[2] || data[3] != 0):
+
+        if (not command in [1, 2]) or (self.version != 2) or (data[2] || data[3] != 0):
             self.valid = False
+            return
+
+        if self.command == 0
+        self.entries = []
+        if (len(data) - 4) % 20 == 0 and (len(data) - 4) / 20 <= 25:
+            for i in range(4, len(data), 20):
+                entry.append(parseEntry(data[i:i+20]))
+
+    def parseEntry(self, data):
+        return None
 
 
 
-
-class RIPOUTPaCkeT:
+class RIPOUTPacket:
     VERSION = 2
     AFI = 2
 
@@ -66,8 +77,26 @@ class RIPOUTPaCkeT:
         idByte = bytearray(routerId)
         nextHopByte = bytearray(nextHop)
         metricByte = bytearray(metric)
-        outPacket = bytearray([self.command, self.version, 0, 0, self.afi, 0, 0, idByte >> 24, idByte >> 16 & 0xFF, idByte >> 8 & 0xFF, idByte & 0xFF, 0, 0, 0, 0, nextHopByte >> 24, nextHopByte >> 16 & 0xFF, nextHopByte >> 8 & 0xFF, nextHopByte & 0xFF, metricByte >> 24, metricByte >> 16 & 0xFF, metricByte >> 8 & 0xFF, metricByte & 0xFF])
-
+        outPacket = bytearray([
+                                self.command,
+                                self.version,
+                                0, 0,
+                                self.afi,
+                                0, 0,
+                                idByte >> 24,
+                                idByte >> 16 & 0xFF,
+                                idByte >> 8 & 0xFF,
+                                idByte & 0xFF,
+                                0, 0, 0, 0,
+                                nextHopByte >> 24,
+                                nextHopByte >> 16 & 0xFF,
+                                nextHopByte >> 8 & 0xFF,
+                                nextHopByte & 0xFF,
+                                metricByte >> 24,
+                                metricByte >> 16 & 0xFF,
+                                metricByte >> 8 & 0xFF,
+                                metricByte & 0xFF
+                                ])
 
 def loadConfig(configFileName):
     """
@@ -157,14 +186,19 @@ def bindUDPPorts():
 
 
 def updateRoutingTable(newEntry):
-    # Needs to check if the port is already in the table
+    # Needs to check if the id is already in the table
     # if it is, compare the metric then update accordingly
-    pass
+    id = newEntry.destination
+    if routingTable[id] is not None:
+        entry = routingTable[id]
+        if entry.metric > newEntry.metric:
+            routingTable[id] = newEntry
+
 
 
 
 # def sendUpdate(id, port):
-#     global outputPorts
+#     global outputPortsnewEntry
 #     # Need to check if what router is being sent to and to not include
 #     # routes that that router has sent to this router
 #     for i in outputPorts:
@@ -175,15 +209,36 @@ def updateRoutingTable(newEntry):
 #     pass
 
 
-def parseUpdate():
-    pass
-
-
 def broadcastUpdate():
     """
     Sends an unsolicited Update message to all neighboring routers
     broadcast these nuts
+    Need to check what router being broadcasted to and to not include
+    routes that that router has sent to this router
     """
+    command = 2
+    neighbours = []
+    for id in routingTable:
+        if routingTable[id].nextHop == routingTable[id].destination:
+            neighbours.append(id)
+
+    for router in neighbours:
+        toSend = []
+        for id in routingTable:
+            if id != router:
+                if routingTable[id].source != router:
+                    toSend.append(id)
+
+        # Need to create a packet to send to "router" that includes the
+        # contents of "toSend"
+        entryList = []
+        for id in toSend:
+            forwardingInfo = forwardingTable[id]
+            entryList.append(RIPEntry(AFI, forwardingInfo.destination, forwardingInfo.weight))
+
+
+
+
 
 
 
