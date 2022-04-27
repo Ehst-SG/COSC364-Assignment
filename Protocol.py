@@ -1,7 +1,6 @@
 import sys
 import socket
 import select
-import threading
 import time
 
 MAX_GLOBAL_PATH = 15
@@ -34,46 +33,28 @@ class ForwardingTableEntry:
 
 
 
-class ParseIncomingPacket:
+
+
+
+class RequestMessage:
     def __init__(self, data):
         self.valid = True
-        if len(data) > 24:
-            parseHeader(data)
-        else:
-            self.valid = False
 
-    def parseHeader(self, data):
-        self.command = data[0]
-        self.version = data[1]
-
-        if (not command in [1, 2]) or (self.version != 2) or (data[2] || data[3] != 0):
-            self.valid = False
-            return
-
-        if self.command == 0
-        self.entries = []
-        if (len(data) - 4) % 20 == 0 and (len(data) - 4) / 20 <= 25:
-            for i in range(4, len(data), 20):
-                entry.append(parseEntry(data[i:i+20]))
-
-    def parseEntry(self, data):
-        return None
+class ResponseMessage:
+    def __init__(self, data):
+        self.valid = True
 
 
-
-class RIPOUTPacket:
+class RIPHeader:
     VERSION = 2
     AFI = 2
 
-    def __init__(self, command, nextHop, metric):
+    def __init__(self, command):
         self.command = command
         self.version = VERSION
         self.afi = AFI
-        self.id = routerId
-        self.nextHop = nextHop
-        self.metric = metric
 
-    def makePacket():
+    def makeHeader():
         idByte = bytearray(routerId)
         nextHopByte = bytearray(nextHop)
         metricByte = bytearray(metric)
@@ -83,20 +64,33 @@ class RIPOUTPacket:
                                 0, 0,
                                 self.afi,
                                 0, 0,
-                                idByte >> 24,
-                                idByte >> 16 & 0xFF,
-                                idByte >> 8 & 0xFF,
-                                idByte & 0xFF,
-                                0, 0, 0, 0,
-                                nextHopByte >> 24,
-                                nextHopByte >> 16 & 0xFF,
-                                nextHopByte >> 8 & 0xFF,
-                                nextHopByte & 0xFF,
-                                metricByte >> 24,
-                                metricByte >> 16 & 0xFF,
-                                metricByte >> 8 & 0xFF,
-                                metricByte & 0xFF
                                 ])
+
+
+class RIPEntry:
+    def __init__(self, nextHop, metric):
+        self.id = routerId
+        self.nextHop = nextHop
+        self.metric = metric
+
+    def makeEntry():
+        entry = bytearray([
+                            idByte >> 24,
+                            idByte >> 16 & 0xFF,
+                            idByte >> 8 & 0xFF,
+                            idByte & 0xFF,
+                            0, 0, 0, 0,
+                            nextHopByte >> 24,
+                            nextHopByte >> 16 & 0xFF,
+                            nextHopByte >> 8 & 0xFF,
+                            nextHopByte & 0xFF,
+                            metricByte >> 24,
+                            metricByte >> 16 & 0xFF,
+                            metricByte >> 8 & 0xFF,
+                            metricByte & 0xFF
+                            ])
+
+
 
 def loadConfig(configFileName):
     """
@@ -151,7 +145,7 @@ def loadConfig(configFileName):
                         "Incorrect output port format given. Expected: output-ports port-cost-id"
                     )
                 # outputPorts.append((int(port[0]), int(port[1]), int(port[2]))) # Need the router id to check where the port is coming from when sending an update
-                # routingTable.append([int(port[0]), int(port[1]), int(port[2])])
+                # forwardingTable.append([int(port[0]), int(port[1]), int(port[2])])
                 outputPorts[int(port[0])] = int(port[1])
 
 
@@ -185,17 +179,40 @@ def bindUDPPorts():
         inputSockets.append(newSocket)
 
 
-def updateRoutingTable(newEntry):
+def updateforwardingTable(newEntry):
     # Needs to check if the id is already in the table
     # if it is, compare the metric then update accordingly
     id = newEntry.destination
-    if routingTable[id] is not None:
-        entry = routingTable[id]
+    if forwardingTable[id] is not None:
+        entry = forwardingTable[id]
         if entry.metric > newEntry.metric:
-            routingTable[id] = newEntry
+            forwardingTable[id] = newEntry
 
 
+class ParseIncomingPacket:
+    def __init__(self, data):
+        self.valid = True
+        if len(data) > 24:
+            parseHeader(data)
+        else:
+            self.valid = False
 
+    def parseHeader(self, data):
+        self.command = data[0]
+        self.version = data[1]
+
+        if (not command in [1, 2]) or (self.version != 2) or (data[2] || data[3] != 0):
+            self.valid = False
+            return
+
+        if self.command == 0
+        self.entries = []
+        if (len(data) - 4) % 20 == 0 and (len(data) - 4) / 20 <= 25:
+            for i in range(4, len(data), 20):
+                entry.append(parseEntry(data[i:i+20]))
+
+    def parseEntry(self, data):
+        return None
 
 # def sendUpdate(id, port):
 #     global outputPortsnewEntry
@@ -218,15 +235,15 @@ def broadcastUpdate():
     """
     command = 2
     neighbours = []
-    for id in routingTable:
-        if routingTable[id].nextHop == routingTable[id].destination:
+    for id in forwardingTable:
+        if forwardingTable[id].nextHop == forwardingTable[id].destination:
             neighbours.append(id)
 
     for router in neighbours:
         toSend = []
-        for id in routingTable:
+        for id in forwardingTable:
             if id != router:
-                if routingTable[id].source != router:
+                if forwardingTable[id].source != router:
                     toSend.append(id)
 
         # Need to create a packet to send to "router" that includes the
@@ -234,7 +251,10 @@ def broadcastUpdate():
         entryList = []
         for id in toSend:
             forwardingInfo = forwardingTable[id]
-            entryList.append(RIPEntry(AFI, forwardingInfo.destination, forwardingInfo.weight))
+            newEntry = RIPEntry(forwardingInfo.nextHop, forwardingInfo.metric)
+
+
+            # entryList.append(RIPEntry(AFI, forwardingInfo.destination, forwardingInfo.weight))
 
 
 
