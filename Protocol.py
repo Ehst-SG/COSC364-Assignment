@@ -3,7 +3,13 @@ import socket
 import select
 import time
 
+# TODO:
+#
+
 MAX_GLOBAL_PATH = 15
+VERSION = 2
+AFI = 2
+HOST = '127.0.0.1'
 
 PERIODIC = 3
 TIMEOUT = 18
@@ -18,78 +24,81 @@ forwardingTable = dict()
 
 
 class ForwardingTableEntry:
-    def __init__(self, destination, nextHop, weight, port, source):
+    def __init__(self, destination, nextHop, weight, source):
         self.destination = destination
         self.nextHop = nextHop
         self.weight = weight
         self.timer = time.time()
         self.source = source
 
-    def update(self, nextHop, weight, port, source):
+    def update(self, nextHop, weight, source):
         self.nextHop = nextHop
         self.weight = weight
         self.timer = time.time()
         self.source = source
 
 
-
-
-
-
 class RequestMessage:
-    def __init__(self, data):
+    def __init__(self):
         self.valid = True
+        self.command = 1
+        self.version = 2
+        self.entries = []
+
+    def addEntry(self, afi, routerID, nextHop, metric):
+        self.entries.append(RIPEntry(afi, routerID, nextHop, metric))
+
 
 class ResponseMessage:
-    def __init__(self, data):
+    def __init__(self):
         self.valid = True
+        self.command = 2
+        self.version = 2
+        self.entries = []
+
+    def addEntry(self, afi, routerID, nextHop, metric):
+        self.entries.append(RIPEntry(afi, routerID, nextHop, metric))
 
 
 class RIPHeader:
-    VERSION = 2
-    AFI = 2
 
     def __init__(self, command):
         self.command = command
-        self.version = VERSION
-        self.afi = AFI
 
-    def makeHeader():
-        idByte = bytearray(routerId)
-        nextHopByte = bytearray(nextHop)
-        metricByte = bytearray(metric)
+    def makeHeader(self):
         outPacket = bytearray([
-                                self.command,
-                                self.version,
-                                0, 0,
-                                self.afi,
-                                0, 0,
-                                ])
+            self.command,
+            VERSION,
+            0, 0
+            ])
 
 
 class RIPEntry:
-    def __init__(self, nextHop, metric):
+    def __init__(self, afi, routerID, nextHop, metric):
+        self.afi = afi
         self.id = routerId
         self.nextHop = nextHop
         self.metric = metric
 
-    def makeEntry():
+    def makeEntry(self):
         entry = bytearray([
-                            idByte >> 24,
-                            idByte >> 16 & 0xFF,
-                            idByte >> 8 & 0xFF,
-                            idByte & 0xFF,
-                            0, 0, 0, 0,
-                            nextHopByte >> 24,
-                            nextHopByte >> 16 & 0xFF,
-                            nextHopByte >> 8 & 0xFF,
-                            nextHopByte & 0xFF,
-                            metricByte >> 24,
-                            metricByte >> 16 & 0xFF,
-                            metricByte >> 8 & 0xFF,
-                            metricByte & 0xFF
-                            ])
 
+                            self.afi,
+                            0, 0,
+                            self.id >> 24,
+                            self.id >> 16 & 0xFF,
+                            self.id >> 8 & 0xFF,
+                            self.id & 0xFF,
+                            0, 0, 0, 0,
+                            self.nextHop >> 24,
+                            self.nextHop >> 16 & 0xFF,
+                            self.nextHop >> 8 & 0xFF,
+                            self.nextHop & 0xFF,
+                            self.metric >> 24,
+                            self.metric >> 16 & 0xFF,
+                            self.metric >> 8 & 0xFF,
+                            self.metric & 0xFF
+                            ])
 
 
 def loadConfig(configFileName):
@@ -110,7 +119,7 @@ def loadConfig(configFileName):
         # Checks the router ID
         if line[0] == "router-id":
             try:
-                id = int(line[1])repository
+                id = int(line[1])
             except Exception:
                 raise Exception("Given router ID is not a number.")
 
@@ -120,20 +129,21 @@ def loadConfig(configFileName):
                 raise Exception("Invalid router ID")
 
         # Adds the input ports to the router if it exists.
-        # TODO
-        #   - Check if doubles
         elif line[0] == 'input-ports':
             ports = []
             for i in range(1, len(line)):
                 ports.append(int(line[i].strip(",")))
             for port in ports:
-                inputPorts.append(port)
+                if port in inputPorts:
+                    raise Exception(
+                        "Two input ports with the same number"
+                    )
+                else:
+                    inputPorts.append(port)
 
         # Adds input ports
         # TODO
-        #   - Check output ports are not input ports
         #   - do something with the ids?
-        #   - Check if doubles
         elif line[0] == 'output-ports':
             ports = []
             for i in range(1, len(line)):
@@ -144,9 +154,29 @@ def loadConfig(configFileName):
                     raise Exception(
                         "Incorrect output port format given. Expected: output-ports port-cost-id"
                     )
-                # outputPorts.append((int(port[0]), int(port[1]), int(port[2]))) # Need the router id to check where the port is coming from when sending an update
-                # forwardingTable.append([int(port[0]), int(port[1]), int(port[2])])
-                outputPorts[int(port[0])] = int(port[1])
+                else:
+
+                    if port[0] in inputPorts:
+                        raise Exception(
+                            "Tried to add an input port that is already used as an output port"
+                            )
+
+                    else:
+
+                        # Checks that there are no ports using the same number in the output ports
+                        double = 0
+                        for router in outputPorts:
+                            for connection in outputPorts[router]:
+                                if connection[0] == port[0]:
+                                    double = 1
+
+                        if double == 1:
+                            raise Exception(
+                                "Two output ports with the same number"
+                                )
+                        else:
+                            outputPorts[int(port[2])] = (
+                                int(port[0]), int(port[1]))
 
 
 def checkConfig():
@@ -167,11 +197,6 @@ def checkConfig():
 
 
 def bindUDPPorts():
-    global inputPorts
-    global outputPorts
-
-    HOST = '127.0.0.1'
-
     for PORT in inputPorts:
         newSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         newSocket.bind((HOST, PORT))
@@ -189,47 +214,37 @@ def updateforwardingTable(newEntry):
             forwardingTable[id] = newEntry
 
 
-class ParseIncomingPacket:
-    def __init__(self, data):
-        self.valid = True
-        if len(data) > 24:
-            parseHeader(data)
-        else:
-            self.valid = False
-
-    def parseHeader(self, data):
-        self.command = data[0]
-        self.version = data[1]
-
-        if (not command in [1, 2]) or (self.version != 2) or (data[2] || data[3] != 0):
-            self.valid = False
-            return
-
-        if self.command == 0
-        self.entries = []
-        if (len(data) - 4) % 20 == 0 and (len(data) - 4) / 20 <= 25:
-            for i in range(4, len(data), 20):
-                entry.append(parseEntry(data[i:i+20]))
-
-    def parseEntry(self, data):
+def ParseIncomingPacket(data):
+    if len(data) < 4:
         return None
 
-# def sendUpdate(id, port):
-#     global outputPortsnewEntry
-#     # Need to check if what router is being sent to and to not include
-#     # routes that that router has sent to this router
-#     for i in outputPorts:
-#         if i[2] != id:
-#             updatePacket = [2, 2, 0, 0, AFI, AFI, 0, 0, id, id, id, id, 0, 0 ,0, 0, next hop, next hop, next hop, next hop, metric, metric, metric, metric]
-#             updatePacket = bytearray(updatePacket)
-#             conn.sendall(updatePacket)
-#     pass
+    command = data[0]
+    version = data[1]
+
+    if (command not in [1, 2]) or (version != 2) or (data[2] | data[3] != 0):
+        return None
+
+    if command == 0:
+        message = RequestMessage()
+        if (len(data) - 4) % 20 == 0 and (len(data) - 4) // 20 > 0:
+            for i in range(4, len(data), 20):
+                entryData = data[i, i + 20]
+                afi = entryData[0] << 8 | entryData[1]
+                routerID = ((entryData[4] << 8 | entryData[5])
+                            << 8 | entryData[6]) << 8 | entryData[7]
+                nextHop = 0  # ?????
+                metric = ((entryData[16] << 8 | entryData[17])
+                          << 8 | entryData[18]) << 8 | entryData[19]
+                message.addEntry(afi, routerID, nextHop, metric)
+    elif command == 1:
+        return ResponseMessage(data)
+    else:
+        return None
 
 
 def broadcastUpdate():
     """
     Sends an unsolicited Update message to all neighboring routers
-    broadcast these nuts
     Need to check what router being broadcasted to and to not include
     routes that that router has sent to this router
     """
@@ -246,21 +261,20 @@ def broadcastUpdate():
                 if forwardingTable[id].source != router:
                     toSend.append(id)
 
-        # Need to create a packet to send to "router" that includes the
-        # contents of "toSend"
         entryList = []
         for id in toSend:
             forwardingInfo = forwardingTable[id]
             newEntry = RIPEntry(forwardingInfo.nextHop, forwardingInfo.metric)
+            entryList.append(newEntry)
 
+        newHeader = RIPHeader(2)
+        packet = newHeader.makeHeader()
+        for entry in entryList:
+            packet += entry
 
-            # entryList.append(RIPEntry(AFI, forwardingInfo.destination, forwardingInfo.weight))
-
-
-
-
-
-
+        inputPorts[0].connect((HOST, outputPorts[router][0]))
+        inputPorts[0].sendall(packet)
+        inputPorts[0].close()
 
 
 def main(args):
@@ -304,7 +318,6 @@ def main(args):
         print(e)
         print("\nExiting...")
         exit()
-
 
 
 if __name__ == "__main__":
