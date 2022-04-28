@@ -4,6 +4,8 @@ import select
 import time
 
 # TODO:
+# Finish the assignment!
+# Actually do work
 #
 
 MAX_GLOBAL_PATH = 15
@@ -19,7 +21,6 @@ routerId = None
 inputPorts = []
 outputPorts = dict()
 inputSockets = []
-
 forwardingTable = dict()
 
 
@@ -38,7 +39,7 @@ class ForwardingTableEntry:
         self.source = source
 
 
-class RequestMessage:
+class RIPMessage:
     def __init__(self):
         self.valid = True
         self.command = 1
@@ -82,23 +83,22 @@ class RIPEntry:
 
     def makeEntry(self):
         entry = bytearray([
-
-                            self.afi,
-                            0, 0,
-                            self.id >> 24,
-                            self.id >> 16 & 0xFF,
-                            self.id >> 8 & 0xFF,
-                            self.id & 0xFF,
-                            0, 0, 0, 0,
-                            self.nextHop >> 24,
-                            self.nextHop >> 16 & 0xFF,
-                            self.nextHop >> 8 & 0xFF,
-                            self.nextHop & 0xFF,
-                            self.metric >> 24,
-                            self.metric >> 16 & 0xFF,
-                            self.metric >> 8 & 0xFF,
-                            self.metric & 0xFF
-                            ])
+            self.afi,
+            0, 0,
+            self.id >> 24,
+            self.id >> 16 & 0xFF,
+            self.id >> 8 & 0xFF,
+            self.id & 0xFF,
+            0, 0, 0, 0,
+            self.nextHop >> 24,
+            self.nextHop >> 16 & 0xFF,
+            self.nextHop >> 8 & 0xFF,
+            self.nextHop & 0xFF,
+            self.metric >> 24,
+            self.metric >> 16 & 0xFF,
+            self.metric >> 8 & 0xFF,
+            self.metric & 0xFF
+            ])
 
 
 def loadConfig(configFileName):
@@ -197,24 +197,55 @@ def checkConfig():
 
 
 def bindUDPPorts():
-    for PORT in inputPorts:
-        newSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        newSocket.bind((HOST, PORT))
+    try:
+        for PORT in inputPorts:
+            newSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            newSocket.bind((HOST, PORT))
+            # newSocket.listen(5)
 
-        inputSockets.append(newSocket)
+            inputSockets.append(newSocket)
+    except Exception as e:
+        exception_type, exception_object, exception_traceback = sys.exc_info()
+
+        print("Line Number: ", exception_traceback.tb_lineno)
+        print(e)
 
 
-def updateforwardingTable(newEntry):
+def updateForwardingTable(newEntry):
     # Needs to check if the id is already in the table
     # if it is, compare the metric then update accordingly
     id = newEntry.destination
-    if forwardingTable[id] is not None:
+    if id in forwardingTable:
         entry = forwardingTable[id]
         if entry.metric > newEntry.metric:
             forwardingTable[id] = newEntry
 
 
+def printForwardingTable():
+    """
+    Prints out the entire forwarding table
+    """
+    doubleLine = "====================================================================="
+
+    print(doubleLine)
+    print(f"Routing table for {routerID}")
+    print(doubleLine)
+    print("| Router ID | Metric | Next Hop |")
+
+    for entry in forwardingTable:
+        print(forwardingTable[entry])
+
+    print(doubleLine)
+    print('\n')
+
+
 def ParseIncomingPacket(data):
+    """
+    Parse incomming packet
+    Takes a bytearray as a variable
+    """
+
+    # Check for a valid header
     if len(data) < 4:
         return None
 
@@ -224,22 +255,22 @@ def ParseIncomingPacket(data):
     if (command not in [1, 2]) or (version != 2) or (data[2] | data[3] != 0):
         return None
 
+
     if command == 0:
         message = RequestMessage()
-        if (len(data) - 4) % 20 == 0 and (len(data) - 4) // 20 > 0:
-            for i in range(4, len(data), 20):
-                entryData = data[i, i + 20]
-                afi = entryData[0] << 8 | entryData[1]
-                routerID = ((entryData[4] << 8 | entryData[5])
-                            << 8 | entryData[6]) << 8 | entryData[7]
-                nextHop = 0  # ?????
-                metric = ((entryData[16] << 8 | entryData[17])
-                          << 8 | entryData[18]) << 8 | entryData[19]
-                message.addEntry(afi, routerID, nextHop, metric)
-    elif command == 1:
-        return ResponseMessage(data)
     else:
-        return None
+        message = ResponseMessage()
+    if (len(data) - 4) % 20 == 0 and (len(data) - 4) // 20 > 0:
+        for i in range(4, len(data), 20):
+            entryData = data[i, i + 20]
+            afi = entryData[0] << 8 | entryData[1]
+            routerID = ((entryData[4] << 8 | entryData[5])
+                        << 8 | entryData[6]) << 8 | entryData[7]
+            nextHop = 0  # ?????
+            metric = ((entryData[16] << 8 | entryData[17])
+                      << 8 | entryData[18]) << 8 | entryData[19]
+            message.addEntry(afi, routerID, nextHop, metric)
+    return message
 
 
 def broadcastUpdate():
@@ -277,6 +308,14 @@ def broadcastUpdate():
         inputPorts[0].close()
 
 
+def manageRequest(message):
+    pass
+
+
+def manageResponse(message):
+    pass
+
+
 def main(args):
     if len(args) != 1:
         print(
@@ -293,11 +332,17 @@ def main(args):
 
         bindUDPPorts()
     except Exception as e:
+        exception_type, exception_object, exception_traceback = sys.exc_info()
+
+        print("Line Number: ", exception_traceback.tb_lineno)
+
         print(e)
         print("\nExiting...")
         exit()
 
     periodicTime = time.time() + PERIODIC
+
+    updateForwardingTable(ForwardingTableEntry(routerId, routerId, 0, routerId))
 
     try:
         while True:
@@ -313,8 +358,21 @@ def main(args):
             else:
                 for inputSocket in readable:
                     # Implement reading of incoming messages
-                    pass
+                    connection, client_address = inputSocket.accept()
+                    data = s.recv(504)
+                    inputSocket.close()
+                    message = ParseIncomingPacket(data)
+                    print(message.valid)
+                    if message.command == 1:
+                        manageRequest(message)
+                    elif message.command == 2:
+                        manageResponse(message)
+
     except Exception as e:
+        exception_type, exception_object, exception_traceback = sys.exc_info()
+
+        print("Line Number: ", exception_traceback.tb_lineno)
+
         print(e)
         print("\nExiting...")
         exit()
