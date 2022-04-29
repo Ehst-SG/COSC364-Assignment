@@ -13,7 +13,7 @@ VERSION = 2
 AFI = 2
 HOST = '127.0.0.1'
 
-PERIODIC = 3
+PERIODIC = 5
 TIMEOUT = 18
 GARBAGE_COLLECTION = 12
 
@@ -175,6 +175,8 @@ def loadConfig(configFileName):
                                 "Two output ports with the same number"
                                 )
                         else:
+                            entry = ForwardingTableEntry(int(port[2]), int(port[2]), int(port[1]), ROUTERID)
+                            updateForwardingTable(entry)
                             outputPorts[int(port[0])] = (
                                 int(port[1]), int(port[2]))
 
@@ -260,7 +262,7 @@ def ParseIncomingPacket(data):
         if (command not in [1, 2]) or (version != 2) or (data[2] | data[3] != 0):
             return None
 
-        if command == 0:
+        if command == 1:
             message = RequestMessage()
         else:
             message = ResponseMessage()
@@ -307,6 +309,7 @@ def broadcastUpdate():
 
         for port in neighbours:
             routerID = outputPorts[port][0]
+
             toSend = [ROUTERID]
             for id in forwardingTable:
                 if id != routerID and forwardingTable[id].source != routerID:
@@ -321,6 +324,8 @@ def broadcastUpdate():
 
             newHeader = RIPHeader(2)
             packet = newHeader.makeHeader()
+            # for entry in entryList:
+            #     print(entry.metric)
             for entry in entryList:
                 packet += entry.makeEntry()
 
@@ -342,6 +347,9 @@ def manageRequest(message):
 
 
 def manageResponse(message):
+    """
+    Add t
+    """
     pass
 
 
@@ -407,6 +415,8 @@ def main(args):
                         manageRequest(message)
                     elif message.command == 2:
                         manageResponse(message)
+
+            # printForwardingTable()
 
     except Exception as e:
         exception_type, exception_object, exception_traceback = sys.exc_info()
