@@ -39,7 +39,7 @@ class ForwardingTableEntry:
         self.source = source
 
 
-class RIPMessage:
+class RequestMessage:
     def __init__(self):
         self.valid = True
         self.command = 1
@@ -67,7 +67,7 @@ class RIPHeader:
         self.command = command
 
     def makeHeader(self):
-        outPacket = bytearray([
+        return bytearray([
             self.command,
             VERSION,
             0, 0
@@ -82,7 +82,7 @@ class RIPEntry:
         self.metric = metric
 
     def makeEntry(self):
-        entry = bytearray([
+        return bytearray([
             self.afi,
             0, 0,
             self.id >> 24,
@@ -175,8 +175,8 @@ def loadConfig(configFileName):
                                 "Two output ports with the same number"
                                 )
                         else:
-                            outputPorts[int(port[2])] = (
-                                int(port[0]), int(port[1]))
+                            outputPorts[int(port[0])] = (
+                                int(port[1]), int(port[2]))
 
 
 def checkConfig():
@@ -201,7 +201,6 @@ def bindUDPPorts():
         for PORT in inputPorts:
             newSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             newSocket.bind((HOST, PORT))
-            # newSocket.listen(5)
 
             inputSockets.append(newSocket)
     except Exception as e:
@@ -228,7 +227,7 @@ def printForwardingTable():
     doubleLine = "====================================================================="
 
     print(doubleLine)
-    print(f"Routing table for {routerID}")
+    print(f"Routing table for {routerId}")
     print(doubleLine)
     print("| Router ID | Metric | Next Hop |")
 
@@ -255,7 +254,6 @@ def ParseIncomingPacket(data):
     if (command not in [1, 2]) or (version != 2) or (data[2] | data[3] != 0):
         return None
 
-
     if command == 0:
         message = RequestMessage()
     else:
@@ -281,15 +279,24 @@ def broadcastUpdate():
     """
     command = 2
     neighbours = []
-    for id in forwardingTable:
-        if forwardingTable[id].nextHop == forwardingTable[id].destination:
-            neighbours.append(id)
+    # for id in forwardingTable:
+    #     if forwardingTable[id].nextHop == forwardingTable[id].destination:
+    #         neighbours.append(id)
 
-    for router in neighbours:
+    for port in outputPorts:
+        neighbours.append(port)
+
+    # neighbours needs to be all output ports and shid
+    # Don't send forwarding table entries to output ports where routerIDs are the source id and it matches a output port
+
+    # print(neighbours)
+
+    for port in neighbours:
+        routerID = outputPorts[port]
         toSend = []
         for id in forwardingTable:
-            if id != router:
-                if forwardingTable[id].source != router:
+            if id != routerID:
+                if forwardingTable[id].source != routerID:
                     toSend.append(id)
 
         entryList = []
@@ -303,9 +310,11 @@ def broadcastUpdate():
         for entry in entryList:
             packet += entry
 
-        inputPorts[0].connect((HOST, outputPorts[router][0]))
-        inputPorts[0].sendall(packet)
-        inputPorts[0].close()
+        # print(packet)
+
+        # inputSockets[0].connect((HOST, port))
+        inputSockets[0].sendto(packet, (HOST, port))
+        # inputSockets[0].close()
 
 
 def manageRequest(message):
@@ -326,9 +335,9 @@ def main(args):
         loadConfig(args[0])
         checkConfig()
 
-        # print(routerId)
-        # print(inputPorts)
-        # print(outputPorts)
+        print(routerId)
+        print(inputPorts)
+        print(outputPorts)
 
         bindUDPPorts()
     except Exception as e:
@@ -342,13 +351,15 @@ def main(args):
 
     periodicTime = time.time() + PERIODIC
 
-    updateForwardingTable(ForwardingTableEntry(routerId, routerId, 0, routerId))
+    updateForwardingTable(ForwardingTableEntry(
+        routerId, routerId, 0, routerId))
 
     try:
         while True:
             readable, _, _ = select.select(
                 inputSockets, [], [], periodicTime - time.time())
             if len(readable) == 0:
+                print("timeout")
                 broadcastUpdate()
 
                 for entry in forwardingTable:
@@ -356,13 +367,17 @@ def main(args):
                         forwardingTable.pop(forwardingTable[entry].destination)
                 periodicTime = time.time() + PERIODIC
             else:
+                print("non-timeout")
                 for inputSocket in readable:
                     # Implement reading of incoming messages
-                    connection, client_address = inputSocket.accept()
-                    data = s.recv(504)
-                    inputSocket.close()
+                    data, addr = inputSocket.recvfrom(504)
+                    # inputSocket.close()
                     message = ParseIncomingPacket(data)
-                    print(message.valid)
+                    print("Valid: ", message.valid)
+                    print("Command: ", message.command)
+                    for entry in message.entries:
+                        print(entry.routerID)
+                        print(entry.metric)
                     if message.command == 1:
                         manageRequest(message)
                     elif message.command == 2:
