@@ -17,7 +17,7 @@ PERIODIC = 3
 TIMEOUT = 18
 GARBAGE_COLLECTION = 12
 
-routerId = None
+ROUTERID = None
 inputPorts = []
 outputPorts = dict()
 inputSockets = []
@@ -25,16 +25,16 @@ forwardingTable = dict()
 
 
 class ForwardingTableEntry:
-    def __init__(self, destination, nextHop, weight, source):
+    def __init__(self, destination, nextHop, metric, source):
         self.destination = destination
         self.nextHop = nextHop
-        self.weight = weight
+        self.metric = metric
         self.timer = time.time()
         self.source = source
 
-    def update(self, nextHop, weight, source):
+    def update(self, nextHop, metric, source):
         self.nextHop = nextHop
-        self.weight = weight
+        self.metric = metric
         self.timer = time.time()
         self.source = source
 
@@ -77,13 +77,13 @@ class RIPHeader:
 class RIPEntry:
     def __init__(self, afi, routerID, nextHop, metric):
         self.afi = afi
-        self.id = routerId
+        self.id = ROUTERID
         self.nextHop = nextHop
         self.metric = metric
 
     def makeEntry(self):
         return bytearray([
-            self.afi,
+            self.afi >> 8, self.afi & 0xFF,
             0, 0,
             self.id >> 24,
             self.id >> 16 & 0xFF,
@@ -106,7 +106,7 @@ def loadConfig(configFileName):
     Process the config file
     """
 
-    global routerId
+    global ROUTERID
     global inputPorts
     global outputPorts
 
@@ -124,7 +124,7 @@ def loadConfig(configFileName):
                 raise Exception("Given router ID is not a number.")
 
             if id > 0 and id <= 64000:
-                routerId = id
+                ROUTERID = id
             else:
                 raise Exception("Invalid router ID")
 
@@ -184,11 +184,11 @@ def checkConfig():
     Checks if required info was provided and was correctly parsed
     """
 
-    global routerId
+    global ROUTERID
     global inputPorts
     global outputPorts
 
-    if routerId is None:
+    if ROUTERID is None:
         raise Exception("Router ID not given")
     if len(inputPorts) == 0:
         raise Exception("No input ports given")
@@ -218,6 +218,8 @@ def updateForwardingTable(newEntry):
         entry = forwardingTable[id]
         if entry.metric > newEntry.metric:
             forwardingTable[id] = newEntry
+    else:
+        forwardingTable[id] = newEntry
 
 
 def printForwardingTable():
@@ -227,12 +229,16 @@ def printForwardingTable():
     doubleLine = "====================================================================="
 
     print(doubleLine)
-    print(f"Routing table for {routerId}")
+    print(f"Routing table for {ROUTERID}")
     print(doubleLine)
-    print("| Router ID | Metric | Next Hop |")
+    # print("| Router ID | Metric | Next Hop |")
+    print("{:<10} {:<10} {:<10} {:<10}".format(
+        'Router ID', 'Metric', 'Next Hop', 'Timeout in (s)'))
 
     for entry in forwardingTable:
-        print(forwardingTable[entry])
+        entry = forwardingTable[entry]
+        print("{:<10} {:<10} {:<10} {:<10}".format(
+            entry.destination, entry.metric, entry.nextHop, TIMEOUT - (time.time() - entry.timer)))
 
     print(doubleLine)
     print('\n')
@@ -243,32 +249,38 @@ def ParseIncomingPacket(data):
     Parse incomming packet
     Takes a bytearray as a variable
     """
+    try:
+        # Check for a valid header
+        if len(data) < 4:
+            return None
 
-    # Check for a valid header
-    if len(data) < 4:
-        return None
+        command = data[0]
+        version = data[1]
 
-    command = data[0]
-    version = data[1]
+        if (command not in [1, 2]) or (version != 2) or (data[2] | data[3] != 0):
+            return None
 
-    if (command not in [1, 2]) or (version != 2) or (data[2] | data[3] != 0):
-        return None
+        if command == 0:
+            message = RequestMessage()
+        else:
+            message = ResponseMessage()
+        if (len(data) - 4) % 20 == 0 and (len(data) - 4) // 20 > 0:
+            for i in range(4, len(data), 20):
+                entryData = data[i: i + 20]
+                afi = entryData[0] << 8 | entryData[1]
+                routerID = ((entryData[4] << 8 | entryData[5])
+                            << 8 | entryData[6]) << 8 | entryData[7]
+                nextHop = 0  # ?????
+                metric = ((entryData[16] << 8 | entryData[17])
+                          << 8 | entryData[18]) << 8 | entryData[19]
+                message.addEntry(afi, routerID, nextHop, metric)
+        return message
+    except Exception as e:
+        exception_type, exception_object, exception_traceback = sys.exc_info()
 
-    if command == 0:
-        message = RequestMessage()
-    else:
-        message = ResponseMessage()
-    if (len(data) - 4) % 20 == 0 and (len(data) - 4) // 20 > 0:
-        for i in range(4, len(data), 20):
-            entryData = data[i, i + 20]
-            afi = entryData[0] << 8 | entryData[1]
-            routerID = ((entryData[4] << 8 | entryData[5])
-                        << 8 | entryData[6]) << 8 | entryData[7]
-            nextHop = 0  # ?????
-            metric = ((entryData[16] << 8 | entryData[17])
-                      << 8 | entryData[18]) << 8 | entryData[19]
-            message.addEntry(afi, routerID, nextHop, metric)
-    return message
+        print("Line Number: ", exception_traceback.tb_lineno)
+
+        raise e
 
 
 def broadcastUpdate():
@@ -277,44 +289,52 @@ def broadcastUpdate():
     Need to check what router being broadcasted to and to not include
     routes that that router has sent to this router
     """
-    command = 2
-    neighbours = []
-    # for id in forwardingTable:
-    #     if forwardingTable[id].nextHop == forwardingTable[id].destination:
-    #         neighbours.append(id)
+    try:
+        command = 2
+        neighbours = []
+        # for id in forwardingTable:
+        #     if forwardingTable[id].nextHop == forwardingTable[id].destination:
+        #         neighbours.append(id)
 
-    for port in outputPorts:
-        neighbours.append(port)
+        for port in outputPorts:
+            neighbours.append(port)
 
-    # neighbours needs to be all output ports and shid
-    # Don't send forwarding table entries to output ports where routerIDs are the source id and it matches a output port
+        # neighbours needs to be all output ports and shid
+        # Don't send forwarding table entries to output ports where routerIDs are the source id and it matches a output port
 
-    # print(neighbours)
+        # print(neighbours)
+        print("len of ft: ", len(forwardingTable))
 
-    for port in neighbours:
-        routerID = outputPorts[port]
-        toSend = []
-        for id in forwardingTable:
-            if id != routerID:
-                if forwardingTable[id].source != routerID:
+        for port in neighbours:
+            routerID = outputPorts[port][0]
+            toSend = [ROUTERID]
+            for id in forwardingTable:
+                if id != routerID and forwardingTable[id].source != routerID:
                     toSend.append(id)
 
-        entryList = []
-        for id in toSend:
-            forwardingInfo = forwardingTable[id]
-            newEntry = RIPEntry(forwardingInfo.nextHop, forwardingInfo.metric)
-            entryList.append(newEntry)
+            entryList = []
+            for id in toSend:
+                forwardingInfo = forwardingTable[id]
+                newEntry = RIPEntry(
+                    2, id, forwardingInfo.nextHop, forwardingInfo.metric)
+                entryList.append(newEntry)
 
-        newHeader = RIPHeader(2)
-        packet = newHeader.makeHeader()
-        for entry in entryList:
-            packet += entry
+            newHeader = RIPHeader(2)
+            packet = newHeader.makeHeader()
+            for entry in entryList:
+                packet += entry.makeEntry()
 
-        # print(packet)
+            # print(packet)
+            # print(len(packet))
+            # inputSockets[0].connect((HOST, port))
+            inputSockets[0].sendto(packet, (HOST, port))
+            # inputSockets[0].close()
+    except Exception as e:
+        exception_type, exception_object, exception_traceback = sys.exc_info()
 
-        # inputSockets[0].connect((HOST, port))
-        inputSockets[0].sendto(packet, (HOST, port))
-        # inputSockets[0].close()
+        print("Line Number: ", exception_traceback.tb_lineno)
+
+        raise e
 
 
 def manageRequest(message):
@@ -335,11 +355,15 @@ def main(args):
         loadConfig(args[0])
         checkConfig()
 
-        print(routerId)
+        print(ROUTERID)
         print(inputPorts)
         print(outputPorts)
 
         bindUDPPorts()
+
+        updateForwardingTable(ForwardingTableEntry(
+            ROUTERID, ROUTERID, 0, None))
+        forwardingTable[ROUTERID].timer = float('inf')
     except Exception as e:
         exception_type, exception_object, exception_traceback = sys.exc_info()
 
@@ -351,8 +375,7 @@ def main(args):
 
     periodicTime = time.time() + PERIODIC
 
-    updateForwardingTable(ForwardingTableEntry(
-        routerId, routerId, 0, routerId))
+    printForwardingTable()
 
     try:
         while True:
@@ -363,7 +386,7 @@ def main(args):
                 broadcastUpdate()
 
                 for entry in forwardingTable:
-                    if entry.timer + TIMEOUT + GARBAGE_COLLECTION <= time.time():
+                    if forwardingTable[entry].timer + TIMEOUT + GARBAGE_COLLECTION <= time.time():
                         forwardingTable.pop(forwardingTable[entry].destination)
                 periodicTime = time.time() + PERIODIC
             else:
@@ -375,8 +398,10 @@ def main(args):
                     message = ParseIncomingPacket(data)
                     print("Valid: ", message.valid)
                     print("Command: ", message.command)
+                    print("Num Entries: ", len(message.entries))
+
                     for entry in message.entries:
-                        print(entry.routerID)
+                        print(entry.id)
                         print(entry.metric)
                     if message.command == 1:
                         manageRequest(message)
