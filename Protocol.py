@@ -427,7 +427,7 @@ def manageResponse(message):
         for entry in message.entries:
             # entry.printEntry()
             newFTEntry = ForwardingTableEntry(entry.id, entry.nextHop, entry.metric, entry.nextHop)
-            if entry.metric >= 16:
+            if entry.metric > MAX_GLOBAL_PATH:
                 if entry.id in forwardingTable:
                     forwardingTable.pop(entry.id)
             else:
