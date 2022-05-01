@@ -8,6 +8,7 @@ import random
 # Finish the assignment!
 # Actually do work
 # ADD TIMERS TO CONFIG
+# Make recieving a 16 metric trigger triggered update
 # make shid tidy
 # delete the todo list
 
@@ -28,6 +29,7 @@ TRIGGERED_MAX = 5 * TIME_SCALE
 ROUTERID = None
 inputPorts = []
 outputPorts = dict()
+portMetrics = dict()
 inputSockets = []
 forwardingTable = dict()
 
@@ -124,11 +126,10 @@ def loadConfig(configFileName):
     """
     Process the config file
     """
+    global ROUTERID
+    global inputPorts
+    global outputPorts
     try:
-        global ROUTERID
-        global inputPorts
-        global outputPorts
-
         cfg = open(configFileName, "r")
         lines = cfg.readlines()
 
@@ -152,45 +153,48 @@ def loadConfig(configFileName):
                 ports = []
                 for i in range(1, len(line)):
                     ports.append(int(line[i].strip(",")))
-                for port in ports:
-                    if port in inputPorts:
+                for portEntry in ports:
+                    if portEntry in inputPorts:
                         raise Exception(
-                            "Two input ports with the same number"
-                        )
+                            "Two input ports with the same number")
                     else:
-                        inputPorts.append(port)
+                        inputPorts.append(portEntry)
 
             # Adds input ports
             # TODO
             #   - do something with the ids?
             elif line[0] == 'output-ports':
                 ports = []
+
                 for i in range(1, len(line)):
                     ports.append(line[i].strip(","))
-                for port in ports:
-                    port = port.split('-')
-                    if len(port) != 3:
+
+                for portEntry in ports:
+                    portEntry = portEntry.split('-')
+                    if len(portEntry) != 3:
                         raise Exception(
-                            "Incorrect output port format given. Expected: output-ports port-cost-id")
+                            "Incorrect output port format given.\n"
+                            + "Expected: output-ports port-cost-id")
                     else:
-                        if port[0] in inputPorts:
+                        if portEntry[0] in inputPorts:
                             raise Exception(
                                 "Tried to add an input port that is already used as an output port")
                         else:
                             # Checks that there are no ports using the same number in the output ports
-                            double = 0
+                            hasDouble = False
                             for router in outputPorts:
-                                for connection in outputPorts[router]:
-                                    if connection == port[0]:
-                                        double = 1
+                                if router == portEntry[0]:
+                                    hasDouble = 1
 
-                            if double == 1:
+                            if hasDouble == 1:
                                 raise Exception(
                                     "Two output ports with the same number"
                                     )
                             else:
-                                outputPorts[int(port[0])] = (
-                                    int(port[1]), int(port[2]))
+                                outputPorts[int(portEntry[0])] = int(
+                                    portEntry[2])
+                                portMetrics[int(portEntry[2])] = int(
+                                    portEntry[1])
     except Exception as e:
         exception_type, exception_object, exception_traceback = sys.exc_info()
 
@@ -203,10 +207,6 @@ def checkConfig():
     """
     Checks if required info was provided and was correctly parsed
     """
-
-    global ROUTERID
-    global inputPorts
-    global outputPorts
 
     if ROUTERID is None:
         raise Exception("Router ID not given")
@@ -257,13 +257,71 @@ def printForwardingTable():
     print("{:<10} {:<10} {:<10} {:<10}".format(
         'Router ID', 'Metric', 'Next Hop', 'Timeout in (s)'))
 
-    for entry in forwardingTable:
+    sortedTable = [i for i in forwardingTable]
+    sortedTable.sort()
+    for entry in sortedTable:
         entry = forwardingTable[entry]
         print("{:<10} {:<10} {:<10} {:<10.1f}".format(
             entry.destination, entry.metric, entry.nextHop, max(0.0, TIMEOUT - (time.time() - entry.timer))))
 
     print(doubleLine)
     print('\n')
+
+
+def broadcastUpdate(bType):
+    """
+    Sends an update message to all neighboring routers.
+    bType, either B or T, determines whether or not the update
+    type is a unsolicited broadcast update or a triggered update
+    caused by a link failing.
+    """
+    try:
+        command = 2
+        neighbours = []
+
+        for port in outputPorts:
+            neighbours.append(port)
+
+        # Don't send forwarding table entries to output ports where routerIDs are the
+        # source id and it matches a output port
+
+        for port in neighbours:
+            routerID = outputPorts[port]
+
+            toSend = []
+            for id in forwardingTable:
+                if id != routerID and forwardingTable[id].source != routerID:
+                    toSend.append(id)
+
+            entryList = []
+            for id in toSend:
+                forwardingInfo = forwardingTable[id]
+
+                if bType == 'T':
+                    if forwardingInfo.changeFlag:
+                        newEntry = RIPEntry(
+                            command, id, forwardingInfo.nextHop, 16)
+                        entryList.append(newEntry)
+
+                elif bType == 'B':
+                    newEntry = RIPEntry(
+                        2, id, forwardingInfo.nextHop, forwardingInfo.metric)
+                    entryList.append(newEntry)
+
+            newHeader = RIPHeader(2)
+            packet = newHeader.makeHeader()
+
+            for entry in entryList:
+                packet += entry.makeEntry()
+
+            inputSockets[0].sendto(packet, (HOST, port))
+
+    except Exception as e:
+        exception_type, exception_object, exception_traceback = sys.exc_info()
+
+        print("Line Number: ", exception_traceback.tb_lineno)
+
+        raise e
 
 
 def ParseIncomingPacket(data):
@@ -295,66 +353,10 @@ def ParseIncomingPacket(data):
                             << 8 | entryData[6]) << 8 | entryData[7]
                 metric = ((entryData[16] << 8 | entryData[17])
                           << 8 | entryData[18]) << 8 | entryData[19]
-                if all(i == 0 for i in (entryData[2:4] + entryData[8:16])) and metric <= MAX_GLOBAL_PATH:
+                if all(j == 0 for j in (entryData[2:4] + entryData[8:16])) and metric <= MAX_GLOBAL_PATH:
                     message.addEntry(
                         afi, routerID, originatingRouterID, metric)
         return message
-    except Exception as e:
-        exception_type, exception_object, exception_traceback = sys.exc_info()
-
-        print("Line Number: ", exception_traceback.tb_lineno)
-
-        raise e
-
-
-def broadcastUpdate(bType):
-    """
-    Sends an update message to all neighboring routers.
-    bType, either B or T, determines whether or not the update
-    type is a unsolicited broadcast update or a triggered update
-    caused by a link failing.
-    """
-    try:
-        command = 2
-        neighbours = []
-
-        for port in outputPorts:
-            neighbours.append(port)
-
-        # Don't send forwarding table entries to output ports where routerIDs are the
-        # source id and it matches a output port
-
-        for port in neighbours:
-            routerID = outputPorts[port][1]
-
-            toSend = []
-            for id in forwardingTable:
-                if id != routerID and forwardingTable[id].source != routerID:
-                    toSend.append(id)
-
-            entryList = []
-            for id in toSend:
-                forwardingInfo = forwardingTable[id]
-
-                if bType == 'T':
-                    if forwardingInfo.changeFlag:
-                        newEntry = RIPEntry(
-                            command, id, forwardingInfo.nextHop, 16)
-                        entryList.append(newEntry)
-
-                elif bType == 'B':
-                    newEntry = RIPEntry(
-                        2, id, forwardingInfo.nextHop, forwardingInfo.metric + outputPorts[port][0])
-                    entryList.append(newEntry)
-
-            newHeader = RIPHeader(2)
-            packet = newHeader.makeHeader()
-
-            for entry in entryList:
-                packet += entry.makeEntry()
-
-            inputSockets[0].sendto(packet, (HOST, port))
-
     except Exception as e:
         exception_type, exception_object, exception_traceback = sys.exc_info()
 
@@ -376,26 +378,18 @@ def manageResponse(message):
     """
     try:
         for entry in message.entries:
-            newFTEntry = ForwardingTableEntry(
-                entry.id, entry.nextHop, entry.metric, entry.nextHop)
+            if entry.metric == MAX_GLOBAL_PATH:
+                newFTEntry = ForwardingTableEntry(
+                    entry.id, entry.nextHop, entry.metric, entry.nextHop)
+            else:
+                newFTEntry = ForwardingTableEntry(
+                    entry.id, entry.nextHop, entry.metric + portMetrics[entry.nextHop], entry.nextHop)
 
-            # If metric is 16 test if the source is the same as the current route source
-            # If true, set metric to 16 and start garbage collection timer
-            # Else, ignore
-            # If metric is not 16 give to updateForwardingTable()
-
-            if entry.metric < MAX_GLOBAL_PATH:
+            if newFTEntry.metric < MAX_GLOBAL_PATH:
                 updateForwardingTable(newFTEntry)
-            elif entry.id in forwardingTable and entry.nextHop == forwardingTable[entry.id].source:
+            elif entry.metric == MAX_GLOBAL_PATH and newFTEntry.destination in forwardingTable and newFTEntry.source == forwardingTable[entry.id].source:
                 updateForwardingTable(newFTEntry)
 
-            # if entry.id in forwardingTable:
-            #     if entry.metric > MAX_GLOBAL_PATH and forwardingTable[entry.id].source == newFTEntry.source:
-            #         forwardingTable.pop(entry.id)
-            #     else:
-            #         updateForwardingTable(newFTEntry)
-            # else:
-            #     updateForwardingTable(newFTEntry)
     except Exception as e:
         exception_type, exception_object, exception_traceback = sys.exc_info()
 
@@ -416,9 +410,11 @@ def main(args):
         checkConfig()
         bindUDPPorts()
 
-        # print(ROUTERID)
-        # print(inputPorts)
-        # print(outputPorts)
+        print("Router ID: ", ROUTERID)
+        print("Listening on ports: ", ", ".join(
+            [str(int) for int in inputPorts]))
+        print("Outputting to ports: ", ", ".join(
+            [str(int) for int in outputPorts]))
 
         updateForwardingTable(ForwardingTableEntry(
             ROUTERID, ROUTERID, 0, None))
@@ -449,29 +445,10 @@ def main(args):
                     randomTime = float("inf")
                     periodicTime += PERIODIC
 
-                elif triggeredUpdates:
-                    if randomTime - time.time() < 0:
-                        broadcastUpdate('T')
-                        triggeredUpdates = False
-                        randomTime = float("inf")
-
-                toPop = []
-                for entry in forwardingTable:
-
-                    if (TIMEOUT - (time.time() - forwardingTable[entry].timer)) < 0:
-                        if not forwardingTable[entry].changeFlag:
-                            print(f"Router {entry} is unreachable")
-                            forwardingTable[entry].metric = 16
-                            forwardingTable[entry].changeFlag = True
-
-                            triggeredUpdates = True
-                            randomTime = time.time() + random.uniform(TRIGGERED_MIN, TRIGGERED_MAX)
-
-                        if GARBAGE_COLLECTION - (time.time() - forwardingTable[entry].timer) < 0:
-                            toPop.append(forwardingTable[entry].destination)
-
-                for entry in toPop:
-                    forwardingTable.pop(entry)
+                elif triggeredUpdates and randomTime - time.time() <= 0:
+                    broadcastUpdate('T')
+                    triggeredUpdates = False
+                    randomTime = float("inf")
 
             else:
                 for inputSocket in readable:
@@ -483,6 +460,23 @@ def main(args):
                         manageRequest(message)
                     elif message.command == 2:
                         manageResponse(message)
+
+            toPop = []
+            for entry in forwardingTable:
+                if (TIMEOUT - (time.time() - forwardingTable[entry].timer)) <= 0:
+                    if not forwardingTable[entry].changeFlag:
+                        print(f"Router {entry} is unreachable")
+                        forwardingTable[entry].metric = 16
+                        forwardingTable[entry].changeFlag = True
+
+                        triggeredUpdates = True
+                        randomTime = time.time() + random.uniform(TRIGGERED_MIN, TRIGGERED_MAX)
+
+                    if GARBAGE_COLLECTION - (time.time() - forwardingTable[entry].timer) <= 0:
+                        toPop.append(forwardingTable[entry].destination)
+
+            for entry in toPop:
+                forwardingTable.pop(entry)
 
     except Exception as e:
         exception_type, exception_object, exception_traceback = sys.exc_info()
