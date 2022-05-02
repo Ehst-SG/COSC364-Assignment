@@ -7,8 +7,8 @@ import random
 # TODO:
 # Finish the assignment!
 # Actually do work
-# ADD TIMERS TO CONFIG
-# Make recieving a 16 metric trigger triggered update
+# ADD TIMERS TO CONFIG  - DONE
+# Make recieving a 16 metric trigger triggered update  - DONE
 # make shid tidy
 # delete the todo list
 
@@ -79,7 +79,6 @@ class ResponseMessage:
 
 
 class RIPHeader:
-
     def __init__(self, command):
         self.command = command
 
@@ -115,12 +114,6 @@ class RIPEntry:
             self.metric & 0xFF
             ])
 
-    def printEntry(self):
-        print(f"Router id: {self.id}")
-        print(f"Next hop: {self.nextHop}")
-        print(f"Metric: {self.metric}")
-        print('\n')
-
 
 def loadConfig(configFileName):
     """
@@ -129,6 +122,9 @@ def loadConfig(configFileName):
     global ROUTERID
     global inputPorts
     global outputPorts
+    global portMetrics
+    global TIME_SCALE
+
     try:
         cfg = open(configFileName, "r")
         lines = cfg.readlines()
@@ -195,11 +191,18 @@ def loadConfig(configFileName):
                                     portEntry[2])
                                 portMetrics[int(portEntry[2])] = int(
                                     portEntry[1])
+            elif line[0] == 'timer-scale':
+                if len(line) != 2:
+                    raise Exception(
+                        "Incorrect timer-scale format given.\n"
+                        + "Expected: timer-scale float")
+                try:
+                    TIME_SCALE = float(line[1])
+                except ValueError:
+                    raise Exception(
+                        "Given timer-scale value is not a valid float.")
+
     except Exception as e:
-        exception_type, exception_object, exception_traceback = sys.exc_info()
-
-        print("Line Number: ", exception_traceback.tb_lineno)
-
         raise e
 
 
@@ -217,6 +220,9 @@ def checkConfig():
 
 
 def bindUDPPorts():
+    """
+    Creates UDP sockets and binds them to the input ports
+    """
     try:
         for PORT in inputPorts:
             newSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -264,8 +270,7 @@ def printForwardingTable():
         print("{:<10} {:<10} {:<10} {:<10.1f}".format(
             entry.destination, entry.metric, entry.nextHop, max(0.0, TIMEOUT - (time.time() - entry.timer))))
 
-    print(doubleLine)
-    print('\n')
+    print(doubleLine + "\n")
 
 
 def broadcastUpdate(bType):
@@ -281,9 +286,6 @@ def broadcastUpdate(bType):
 
         for port in outputPorts:
             neighbours.append(port)
-
-        # Don't send forwarding table entries to output ports where routerIDs are the
-        # source id and it matches a output port
 
         for port in neighbours:
             routerID = outputPorts[port]
@@ -324,7 +326,7 @@ def broadcastUpdate(bType):
         raise e
 
 
-def ParseIncomingPacket(data):
+def parseIncomingPacket(data):
     """
     Parse incomming packet
     Takes a bytearray as a variable
@@ -454,7 +456,7 @@ def main(args):
                 for inputSocket in readable:
                     # Implement reading of incoming messages
                     data, addr = inputSocket.recvfrom(504)
-                    message = ParseIncomingPacket(data)
+                    message = parseIncomingPacket(data)
 
                     if message.command == 1:
                         manageRequest(message)
