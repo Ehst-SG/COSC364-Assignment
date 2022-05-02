@@ -1,3 +1,3 @@
 router-id 7
-input-ports 4200
-output-ports 6110-8-1, 7000-6-4
+input-ports 6071, 6074
+output-ports 6017-8-1, 6047-6-4
