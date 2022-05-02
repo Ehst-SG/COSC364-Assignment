@@ -35,6 +35,10 @@ forwardingTable = dict()
 
 
 class ForwardingTableEntry:
+    """
+    Represents a single entry in the forwarding table
+    """
+
     def __init__(self, destination, nextHop, metric, source):
         self.destination = destination
         self.nextHop = nextHop
@@ -56,46 +60,53 @@ class ForwardingTableEntry:
             self.timer = time.time() - TIMEOUT
 
 
-class RequestMessage:
-    def __init__(self):
+class RIPMessage:
+    """
+    Represents a RIP Message
+    """
+
+    def __init__(self, command, version, source):
         self.valid = True
-        self.command = 1
-        self.version = 2
+        self.header = RIPHeader(command, version, source)
         self.entries = []
 
-    def addEntry(self, afi, routerID, nextHop, metric):
-        self.entries.append(RIPEntry(afi, routerID, nextHop, metric))
+    def addEntry(self, afi, routerID, metric):
+        self.entries.append(RIPEntry(afi, routerID, metric))
 
-
-class ResponseMessage:
-    def __init__(self):
-        self.valid = True
-        self.command = 2
-        self.version = 2
-        self.entries = []
-
-    def addEntry(self, afi, routerID, nextHop, metric):
-        self.entries.append(RIPEntry(afi, routerID, nextHop, metric))
+    def makePacket(self):
+        packet = self.header.makeHeader()
+        for entry in self.entries:
+            packet += entry.makeEntry()
+        return packet
 
 
 class RIPHeader:
-    def __init__(self, command):
+    """
+    Represents a RIP Header
+    """
+
+    def __init__(self, command, version, source):
         self.command = command
+        self.version = version
+        self.source = source
 
     def makeHeader(self):
         return bytearray([
             self.command,
-            VERSION,
-            ROUTERID >> 8,
-            ROUTERID & 0xFF
+            self.version,
+            self.source >> 8,
+            self.source & 0xFF
             ])
 
 
 class RIPEntry:
-    def __init__(self, afi, routerID, nextHop, metric):
+    """
+    Represents a single RIP entry
+    """
+
+    def __init__(self, afi, routerID, metric):
         self.afi = afi
         self.id = routerID
-        self.nextHop = nextHop
         self.metric = metric
 
     def makeEntry(self):
@@ -117,7 +128,8 @@ class RIPEntry:
 
 def loadConfig(configFileName):
     """
-    Process the config file
+    Process the config file and tests the given information to make sure that
+    it is all correct.
     """
     global ROUTERID
     global inputPorts
@@ -130,7 +142,7 @@ def loadConfig(configFileName):
         lines = cfg.readlines()
 
         for line in lines:
-            line = line.split(" ")  # input-ports 6110, 6201, 7345
+            line = line.split(" ")
 
             # Checks the router ID
             if line[0] == "router-id":
@@ -156,9 +168,7 @@ def loadConfig(configFileName):
                     else:
                         inputPorts.append(portEntry)
 
-            # Adds input ports
-            # TODO
-            #   - do something with the ids?
+            # Adds output ports
             elif line[0] == 'output-ports':
                 ports = []
 
@@ -237,13 +247,15 @@ def bindUDPPorts():
 
 
 def updateForwardingTable(newEntry):
-    # Needs to check if the id is already in the table
-    # if it is, compare the metric then update accordingly
+    """
+    Needs to check if the id is already in the table
+    if it is, compare the metric then update accordingly
+    """
     id = newEntry.destination
     if id in forwardingTable:
         entry = forwardingTable[id]
         if entry.metric > newEntry.metric or entry.nextHop == newEntry.nextHop:
-            if entry.nextHop in forwardingTable:  # NEEDS TESTING MAY BREAK ALL
+            if entry.nextHop in forwardingTable:
                 forwardingTable[id].update(
                     newEntry.nextHop, newEntry.metric, newEntry.source)
     else:
@@ -282,6 +294,7 @@ def broadcastUpdate(bType):
     """
     try:
         command = 2
+        afi = 2
         neighbours = []
 
         for port in outputPorts:
@@ -295,26 +308,19 @@ def broadcastUpdate(bType):
                 if id != routerID and forwardingTable[id].source != routerID:
                     toSend.append(id)
 
-            entryList = []
+            updateMessage = RIPMessage(command, VERSION, ROUTERID)
+
             for id in toSend:
                 forwardingInfo = forwardingTable[id]
 
                 if bType == 'T':
                     if forwardingInfo.changeFlag:
-                        newEntry = RIPEntry(
-                            command, id, forwardingInfo.nextHop, 16)
-                        entryList.append(newEntry)
+                        updateMessage.addEntry(afi, id, MAX_GLOBAL_PATH)
 
                 elif bType == 'B':
-                    newEntry = RIPEntry(
-                        2, id, forwardingInfo.nextHop, forwardingInfo.metric)
-                    entryList.append(newEntry)
+                    updateMessage.addEntry(afi, id, forwardingInfo.metric)
 
-            newHeader = RIPHeader(2)
-            packet = newHeader.makeHeader()
-
-            for entry in entryList:
-                packet += entry.makeEntry()
+            packet = updateMessage.makePacket()
 
             inputSockets[0].sendto(packet, (HOST, port))
 
@@ -344,9 +350,9 @@ def parseIncomingPacket(data):
             return None
 
         if command == 1:
-            message = RequestMessage()
+            message = RIPMessage(1, VERSION, originatingRouterID)
         else:
-            message = ResponseMessage()
+            message = RIPMessage(2, VERSION, originatingRouterID)
         if (len(data) - 4) % 20 == 0 and (len(data) - 4) // 20 > 0:
             for i in range(4, len(data), 20):
                 entryData = data[i: i + 20]
@@ -357,7 +363,7 @@ def parseIncomingPacket(data):
                           << 8 | entryData[18]) << 8 | entryData[19]
                 if all(j == 0 for j in (entryData[2:4] + entryData[8:16])) and metric <= MAX_GLOBAL_PATH:
                     message.addEntry(
-                        afi, routerID, originatingRouterID, metric)
+                        afi, routerID, metric)
         return message
     except Exception as e:
         exception_type, exception_object, exception_traceback = sys.exc_info()
@@ -382,10 +388,11 @@ def manageResponse(message):
         for entry in message.entries:
             if entry.metric == MAX_GLOBAL_PATH:
                 newFTEntry = ForwardingTableEntry(
-                    entry.id, entry.nextHop, entry.metric, entry.nextHop)
+                    entry.id, message.header.source, entry.metric, message.header.source)
+                newFTEntry.changeFlag = True
             else:
                 newFTEntry = ForwardingTableEntry(
-                    entry.id, entry.nextHop, entry.metric + portMetrics[entry.nextHop], entry.nextHop)
+                    entry.id, message.header.source, entry.metric + portMetrics[message.header.source], message.header.source)
 
             if newFTEntry.metric < MAX_GLOBAL_PATH:
                 updateForwardingTable(newFTEntry)
@@ -458,9 +465,9 @@ def main(args):
                     data, addr = inputSocket.recvfrom(504)
                     message = parseIncomingPacket(data)
 
-                    if message.command == 1:
+                    if message.header.command == 1:
                         manageRequest(message)
-                    elif message.command == 2:
+                    elif message.header.command == 2:
                         manageResponse(message)
 
             toPop = []
@@ -493,4 +500,9 @@ def main(args):
 if __name__ == "__main__":
     main(sys.argv[1:])
 
+#hello
+#hello
+#hello
+#hello
+#hello
 #hello
