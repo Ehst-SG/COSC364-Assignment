@@ -1,3 +1,4 @@
 router-id 1
 input-ports 6012, 6016, 6017
 output-ports 6021-1-2, 6061-5-6, 6071-8-7
+timer-scale 0.1

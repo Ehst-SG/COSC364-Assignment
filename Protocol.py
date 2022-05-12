@@ -231,6 +231,18 @@ def loadConfig(configFileName):
                 raise Exception(
                     "Given timer-scale value is not a valid float.")
 
+def updateTimers():
+    global PERIODIC
+    global TIMEOUT
+    global GARBAGE_COLLECTION
+    global TRIGGERED_MIN
+    global TRIGGERED_MAX
+
+    PERIODIC = 30 * TIME_SCALE
+    TIMEOUT = 180 * TIME_SCALE
+    GARBAGE_COLLECTION = 300 * TIME_SCALE
+    TRIGGERED_MIN = 1 * TIME_SCALE
+    TRIGGERED_MAX = 5 * TIME_SCALE
 
 def checkConfig():
     """
@@ -408,6 +420,7 @@ def main(args):
     try:
         loadConfig(args[0])
         checkConfig()
+        updateTimers()
         bindUDPPorts()
 
         print("Router ID: ", ROUTERID)

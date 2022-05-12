@@ -1,3 +1,4 @@
 router-id 7
 input-ports 6071, 6074
 output-ports 6017-8-1, 6047-6-4
+timer-scale 0.1

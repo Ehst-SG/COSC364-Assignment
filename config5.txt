@@ -1,3 +1,4 @@
 router-id 6
 input-ports 6061, 6065
 output-ports 6016-5-1, 6056-1-5
+timer-scale 0.1

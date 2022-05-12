@@ -1,3 +1,4 @@
 router-id 4
 input-ports 6043, 6045, 6047
 output-ports 6034-4-3, 6054-2-5, 6074-6-7
+timer-scale 0.1

@@ -1,3 +1,4 @@
 router-id 3
 input-ports 6032, 6034
 output-ports 6023-1-2, 6043-4-4
+timer-scale 0.1
